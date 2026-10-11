@@ -10,10 +10,13 @@ spends almost nothing reading it.
   lunagen "prompt" -o out.png [-i ref.png ...] [--size 1024x1536] [--copy "exact text" ...]
   lunagen batch jobs.jsonl -d outdir [-j 4] [--n 2] [--redo A,B] [--redo-low] [--dry-run]
   lunagen check jobs.jsonl -d outdir      (checks + sheets only, no generation)
+  lunagen look analyze REF.jpg | lunagen look match REF.jpg -d outdir   (see look.py)
 
 jobs.jsonl, one job per line:
   {"name": "BLOOM-V1", "prompt": "...", "refs": ["/abs/ref.png"], "size": "1024x1536",
    "copy": ["Comfort", "should be your baseline.", "25% off with code EARLYBF25"]}
+  optional "look": "/abs/reference.jpg" writes look/<name>.jpg matched to that photo's
+  resolution, tone, colour and grain after the batch (the model always renders crisp HD)
 
 batch skips names that already have a PNG (so it resumes), stops cleanly on the
 usage limit, retries a failed job once, writes <name>.png + <name>.txt (the exact
@@ -443,7 +446,8 @@ def load_jobs(path: str, default_size: str, default_n: int = 2) -> list[dict]:
                          "prompt": j["prompt"],
                          "refs": [str(Path(r).expanduser()) for r in (j.get("refs") or j.get("references") or [])],
                          "size": j.get("size", default_size),
-                         "copy": j.get("copy") or []})
+                         "copy": j.get("copy") or [],
+                         "look": str(Path(j["look"]).expanduser()) if j.get("look") else ""})
     seen: dict[str, int] = {}
     for j in jobs:
         seen[j["name"]] = seen.get(j["name"], 0) + 1
@@ -463,6 +467,8 @@ def dry_run(d: Path, jobs: list[dict], redo: set[str], parallel: int) -> int:
         for r in j["refs"]:
             if not Path(r).exists():
                 problems.append(f"{j['name']}: reference not found: {r}")
+        if j.get("look") and not Path(j["look"]).exists():
+            problems.append(f"{j['name']}: look reference not found: {j['look']}")
         if j["name"] in redo or j["base"] in redo:
             todo.append(j)
         elif p.exists() and p.stat().st_size > 1000:
@@ -595,9 +601,40 @@ def cmd_batch(a) -> int:
     if bad:
         print("failed: " + ",".join(r["name"] for r in bad))
     flagged = check_and_sheet(d, jobs, sheet=not a.no_sheet)
+    apply_looks(d, jobs)
     if bad:
         return 2 if stop.is_set() else 1
     return 3 if flagged else 0
+
+
+def _look_module():
+    spec = importlib.util.spec_from_file_location("lunagen_look", HERE / "look.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def apply_looks(d: Path, jobs: list[dict]) -> int:
+    """For jobs with a "look" reference: write look/<name>.jpg matched to it (resolution,
+    tone, colour, grain; see look.py) whenever the PNG is newer than its look copy."""
+    todo = [j for j in jobs if j.get("look") and (d / f"{j['name']}.png").exists()]
+    if not todo:
+        return 0
+    lk = _look_module()
+    out = d / "look"
+    made = []
+    for j in todo:
+        src, dst = d / f"{j['name']}.png", out / f"{j['name']}.jpg"
+        if not dst.exists() or dst.stat().st_mtime < src.stat().st_mtime:
+            lk.match(src, j["look"], dst)
+        made.append(dst)
+    by_ref: dict[str, list[Path]] = {}
+    for j, dst in zip(todo, made):
+        by_ref.setdefault(j["look"], []).append(dst)
+    for i, (ref, paths) in enumerate(by_ref.items(), 1):
+        lk.sheet(ref, paths, out / f"_look-sheet-{i}.jpg")
+    print(f"look: {len(made)} matched to {len(by_ref)} reference(s) -> {out}/_look-sheet-*.jpg")
+    return len(made)
 
 
 def cmd_check(a) -> int:
@@ -607,6 +644,8 @@ def cmd_check(a) -> int:
 
 def main() -> int:
     argv = sys.argv[1:]
+    if argv and argv[0] == "look":
+        return _look_module().main(argv[1:])
     if argv and argv[0] in ("batch", "check"):
         p = argparse.ArgumentParser(prog=f"lunagen {argv[0]}")
         p.add_argument("jobs", help="jobs.jsonl")

@@ -17,11 +17,12 @@ lunagen "a green mug" -o mug.png --size 1536x1024
 - **Checks:** output shape vs the asked size, and every `copy` string found in the image by local OCR (misreads get a closer second look).
 - **Contact sheets:** one row per concept, flagged images framed in red, and a `REDO` / `ONE-OF` verdict per concept.
 - **Safe reruns:** resumes, re-renders edited prompts, keeps every old version on `--redo`, stops cleanly at the usage limit.
+- **Look matching:** the model always renders crisp HD, whatever the prompt says. Add `"look": "/abs/photo.jpg"` to a job and each render also gets a `look/<name>.jpg` matched to that photo's measured detail (real resolution), tone curve, colour per tonal band, saturation and grain. Standalone: `lunagen look analyze photo.jpg` and `lunagen look match photo.jpg -d out`.
 - **Also:** `--dry-run` (cost and problems, renders nothing), `--redo-low`, `lunagen check`.
 
 ## Setup
 
-macOS, Python 3 with Pillow, `codex login`, and [chatgpt-imagegen](https://github.com/leeguooooo/chatgpt-imagegen) (not included): put `chatgpt-imagegen.py` beside `lunagen.py` or set `LUNAGEN_ENGINE`.
+macOS, Python 3 with Pillow and numpy, `codex login`, and [chatgpt-imagegen](https://github.com/leeguooooo/chatgpt-imagegen) (not included): put `chatgpt-imagegen.py` beside `lunagen.py` or set `LUNAGEN_ENGINE`.
 
 ```sh
 python3 -I test_lunagen.py   # offline tests

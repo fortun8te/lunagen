@@ -66,5 +66,38 @@ check("dry run finds problems", lg.dry_run(out, jobs, set(), 4) == 1)
     + json.dumps({"name": "S", "ok": True, "meta": {"quality": "medium"}}) + "\n")
 check("latest quality", lg.latest_quality(out) == {"S": "medium"})
 
+# look: Lab round trip, detail tracks real resolution, match hits the reference's detail
+import numpy as np
+from PIL import Image, ImageFilter
+
+lk = lg._look_module()
+rgb = np.random.default_rng(0).random((40, 40, 3)).astype(np.float32)
+check("look: lab round trip", float(np.abs(lk.lab2rgb(lk.rgb2lab(rgb)) - rgb).max()) < 2e-3)
+
+rng = np.random.default_rng(1)
+sharp = Image.fromarray((rng.random((96, 64)) * 255).astype(np.uint8)).resize((512, 768), Image.NEAREST)
+sharp = sharp.filter(ImageFilter.GaussianBlur(1)).convert("RGB")
+blown = lambda w: sharp.resize((w, w * 3 // 2), Image.BOX).resize(sharp.size, Image.BICUBIC)
+arr = lambda im: np.asarray(im, np.float32) / 255
+ds = [lk.detail(arr(blown(w))) for w in (100, 200, 350)] + [lk.detail(arr(sharp))]
+check("look: detail rises with real resolution", ds == sorted(ds) and ds[0] < ds[-1] * 0.8)
+
+ref_p, src_p, dst_p = d / "ref.png", d / "src.png", d / "look" / "src.jpg"
+blown(110).save(ref_p)
+sharp.save(src_p)
+lk.match(src_p, ref_p, dst_p)
+got, want = lk.detail(arr(Image.open(dst_p))), lk.detail(arr(Image.open(ref_p)))
+check("look: match lands on the reference's detail", Image.open(dst_p).size == sharp.size
+      and abs(got - want) < 0.25 * want)
+
+jl = lg.load_jobs(jobs_file(d, [{"name": "L", "prompt": "p", "look": str(ref_p)}]), "auto", 1)
+check("look: job keeps its look reference", jl[0]["look"] == str(ref_p))
+lo = d / "lookrun"
+lo.mkdir()
+sharp.save(lo / "L.png")
+check("look: batch writes look/<name>.jpg", lg.apply_looks(lo, jl) == 1 and (lo / "look" / "L.jpg").exists())
+check("look: dry run flags a missing look ref", lg.dry_run(
+    lo, lg.load_jobs(jobs_file(d, [{"name": "M", "prompt": "p", "look": "/nope.jpg"}]), "auto", 1), set(), 4) == 1)
+
 print("\nall passed" if not fails else f"\n{len(fails)} failed: {fails}")
 raise SystemExit(1 if fails else 0)
