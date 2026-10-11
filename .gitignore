@@ -1,0 +1,5 @@
+__pycache__/
+ocr/ocr
+*.pyc
+.DS_Store
+chatgpt-imagegen.py
